@@ -1,0 +1,210 @@
+---
+title: "Deep Learning"
+author: "Jonathan Ish-Horowicz"
+date: "02/03/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Keras Installation for R
+
+Using Keras in R is a bit more complicated than in Python, since the R version is just a wrapper for the Python code.
+
+```{r, eval=FALSE}
+# Only run if you haven't already installed Keras for R
+install.packages("devtools")
+devtools::install_github("rstudio/keras")
+library(keras)
+install_keras()
+```
+
+If you have successfully installed Keras then continue. If you are having a lot of problems with the installation then consider switching to Python for deep learning.
+
+```{r}
+library(keras)
+```
+
+# Computer Vision using Convolutional Neural Networks
+
+## Logistic regression for MNIST digits
+
+We start by loading the MNIST data.
+
+```{r}
+# Load data
+mnist <- dataset_mnist()
+x_train <- mnist$train$x
+y_train <- mnist$train$y
+x_test <- mnist$test$x
+y_test <- mnist$test$y
+
+x_train <- x_train/255.0
+x_test <- x_test/255.0
+
+y_train <- to_categorical(y_train, num_classes=10)
+y_test <- to_categorical(y_test, num_classes=10)
+```
+
+There are 60,000 training and 10,000 test images. Each image is 18x18 pixels. We have also one-hot encoded the labels.
+
+We can show display some of the images before we start. This is always a good idea before starting any computer vision task.
+
+```{r}
+image.idx <- sample(1:dim(x_train)[[1]], size=1)
+image(x_train[image.idx,,], useRaster=TRUE, axes=FALSE, main=paste("digit:", y_train[image.idx]))
+```
+
+A neural network with no hidden layers and a softmax activation function is just multinomial logistic regression. 
+
+Logistic regression works on vectors, while MNIST digits are images. So we have to flatten the arrays containing the images to make them into vectors (this is part of the reason convolutional neural networks outperform logistic regression - they retain the spatial information of the pixels).
+
+```{r}
+flatten.array <- function(arr) {
+  return(t(apply(arr, 1, c)))
+}
+x_train_flat <- flatten.array(x_train)
+x_test_flat <- flatten.array(x_test)
+```
+
+Construct a logistic regression model to classify MNIST digits using keras.
+
+```{r}
+# your code here
+model <- keras_model_sequential()
+model %>%
+  layer_dense(units=10, activation='softmax', input_shape=c(784))
+```
+
+Now compile the model.
+
+```{r}
+model %>% compile(
+  optimizer = 'adadelta',
+  loss = 'categorical_crossentropy',
+  metrics = list('accuracy')
+)
+```
+
+Now fit the model.
+
+```{r}
+model %>% fit(
+  x_train_flat,
+  y_train,
+  epochs=10,
+  batch_size=32
+)
+```
+
+When training neural networks it is important to check the learning curves. They are plotted automatically in Rstudio.
+
+Then evaluate on the test set:
+
+```{r}
+score <- model %>% evaluate(x_test_flat, y_test)
+print(score)
+```
+
+We can achieve a quite high test accuracy even with this simple model, so this is quite a simple problem.
+
+## Convolutional Neural Network for MNIST digits
+
+Now we will build a small convolutional neural network.
+
+Add more layers to the network and try to improve on the test accuracy you achieved with logistic regression. Put convolutional layers at the start of the network then use dense layers further in. Use the same procedure as when building the previous model: (i) define the layers, (ii) compile the model and (iii) fit the model. Then evaluate on the test set.
+
+```{r}
+# your code here
+
+# hint: use layer_conv_2d() and layer_dense()
+```
+
+# Natural Language Processing using Recurrent Neural Networks
+
+We will lose the IMDB datasets, which is 50,000 movie reviews. We will train a recurrent neural network to classify the reviews into positive and negative sentiment.
+
+We start by loading the dataset.
+
+```{r}
+NUM_WORDS = 1004 # Top most frequent words to consider. Any less frequent word will appear as oov_char value in the sequence data.
+SKIP_TOP = 0 # Top most frequent words to ignore (they will appear as oov_char value in the sequence data).
+MAXLEN = 2000 # Maximum sequence length. Any longer sequence will be truncated. Null menans the full sequences are used
+START_CHAR = 1 # The start of a sequence will be marked with this character. Set to 1 because 0 is usually the padding character.
+OOV_CHAR = 2 # words that were cut out because of the num_words or skip_top limit will be replaced with this integer
+INDEX_FROM = 3 # Index actual words with this index and higher.
+SEED = 123
+PADDED_LENGTH = 500
+
+imdb <- dataset_imdb(
+  num_words=NUM_WORDS,
+  skip_top=SKIP_TOP,
+  maxlen=MAXLEN,
+  seed=SEED,
+  start_char=START_CHAR,
+  oov_char=OOV_CHAR,
+  index_from=INDEX_FROM
+)
+
+# Subset the data as it is quite large and requires too much RAM for most laptops
+# Increase these numbers if you are able
+x.train <- imdb$train$x[1:5000]
+y.train <- imdb$train$y[1:5000]
+x.test <- imdb$test$x[1:1000]
+y.test <- imdb$test$y[1:1000]
+```
+
+## Preprocessing the sequences
+
+`x.train` is a list (with length 25,000), where each element is a sequence of integers. Each integer corresponds to a unique word.
+A neural network requires all the sequences to have the same length, so we pad the shorter sequences with zeros using `keras::pad_sequences`.
+
+```{r}
+x.train <- pad_sequences(x.train, maxlen=PADDED_LENGTH)
+x.test <- pad_sequences(x.test, maxlen=PADDED_LENGTH)
+```
+
+## Building a recurrent neural network
+
+We use the same workflow as above: we define the layers, compile the model then fit. The main difference here is that, as we are using sequence data, we use an LSTM as the first layer rather than convolutions.
+
+We also use an embedding layer before the LSTM. Here we learn the embeddings, but we could also use pre-trained embeddings such as [GloVe](https://nlp.stanford.edu/projects/glove/) or [Word2Vec](https://en.wikipedia.org/wiki/Word2vec). These have already been trained on huge datasets and often give better performance than training your own embeddings.
+
+```{r}
+EPOCHS <- 5
+BATCH_SIZE <- 64
+EMBEDDING.DIM <- 128
+
+model <- keras_model_sequential()
+
+model %>%
+  layer_embedding(input_dim=NUM_WORDS, output_dim=EMBEDDING.DIM) %>% 
+  layer_lstm(units=64) %>% 
+  layer_dense(units=1, activation='sigmoid')
+
+model %>% compile(
+  loss = 'binary_crossentropy',
+  optimizer = 'adam',
+  metrics = c('accuracy')
+)
+
+model %>% fit(
+  x.train, y.train,
+  batch_size=BATCH_SIZE,
+  epochs=EPOCHS
+)
+```
+
+Now we can test on the test set:
+
+```{r}
+score <- model %>% evaluate(x.test, y.test)
+```
+
+Now try and change your model (e.g. the number/types of layers, the size of the embedding layer) and try to improve on the test accuracy.
+
+```{r}
+# your code here
+```
